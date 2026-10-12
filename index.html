@@ -198,9 +198,27 @@ h1{font-size:22px;font-weight:700;margin:0;letter-spacing:-.01em}
 .dlg-btns .danger{color:var(--danger);font-weight:600}
 .dlg-btns .strong{font-weight:600}
 
+/* Фото в заказе */
+.photos{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.ph,.ph-add{width:76px;height:76px;border-radius:10px;flex:none;padding:0}
+.ph{position:relative;overflow:hidden;background:var(--bg);border:0}
+.ph img{width:100%;height:100%;object-fit:cover;display:block}
+.ph.loading::after{content:"";position:absolute;inset:0;margin:auto;width:22px;height:22px;border:2px solid var(--hint);border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite}
+.ph.loading img{opacity:.45}
+.ph.broken::before{content:"нет фото";position:absolute;inset:0;display:grid;place-items:center;font-size:11px;color:var(--hint)}
+.ph-add{border:1.5px dashed var(--hint);background:transparent;color:var(--accent);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:12px}
+.ph-add b{font-size:24px;line-height:1;font-weight:400}
+.ph-hint{font-size:12.5px;color:var(--hint);margin-top:6px}
+.viewer{position:fixed;inset:0;z-index:25;background:#000;display:flex;flex-direction:column}
+.viewer-body{flex:1;min-height:0;overflow:auto;display:flex;align-items:flex-start;justify-content:center;-webkit-overflow-scrolling:touch}
+.viewer-body img{width:100%;height:auto;display:block;margin:auto 0}
+.viewer-bar{display:flex;justify-content:space-between;gap:12px;padding:12px 16px calc(12px + env(safe-area-inset-bottom));background:#000}
+.viewer-bar button{border:0;background:rgba(255,255,255,.14);color:#fff;padding:11px 16px;border-radius:10px;font-size:15px}
+.viewer-bar .del{color:#ff6b6b}
 .toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom));transform:translate(-50%,16px);z-index:30;background:rgba(28,28,30,.92);color:#fff;padding:10px 16px;border-radius:12px;font-size:14px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;max-width:calc(100% - 32px);text-align:center}
 .toast.show{opacity:1;transform:translate(-50%,0)}
 body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
+#viewer:not([hidden]) ~ .toast{bottom:calc(86px + env(safe-area-inset-bottom))}
 </style>
 </head>
 <body>
@@ -210,6 +228,9 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
   <header class="top">
     <h1>Заказы шин</h1>
     <div class="top-btns">
+      <button class="icon-btn" id="btnRefresh" aria-label="Обновить">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>
+      </button>
       <button class="icon-btn" id="btnSettings" aria-label="Настройки">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>
       </button>
@@ -331,6 +352,10 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
       <label class="row"><span class="lbl">Комментарий</span>
         <textarea name="note" rows="2" maxlength="500" placeholder="Поставщик, склад, договорённости…"></textarea>
       </label>
+      <div class="row"><span class="lbl">Фото — скрин заказа у поставщика, чек и т.п.</span>
+        <div class="photos" id="photos"></div>
+        <input type="file" id="photoInput" accept="image/*" multiple hidden>
+      </div>
     </div>
 
     <div id="editExtras" hidden>
@@ -371,7 +396,7 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
       <button type="button" class="act" id="btnTsv">Скопировать все заказы таблицей</button>
     </div>
     <p class="meta">Таблицу можно вставить в Excel или Google Таблицы — колонки разложатся сами.</p>
-    <div class="sec-h">Хранение и доступ</div>
+    <div class="sec-h">Доступ</div>
     <p class="meta" id="storeInfo" style="margin-top:0"></p>
   </div>
 </div>
@@ -384,6 +409,12 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
     <textarea id="dlgArea" readonly hidden></textarea>
     <div class="dlg-btns"><button type="button" id="dlgCancel">Отмена</button><button type="button" id="dlgOk" class="strong">OK</button></div>
   </div>
+</div>
+
+<!-- ===== Просмотр фото ===== -->
+<div class="viewer" id="viewer" hidden>
+  <div class="viewer-body"><img id="viewerImg" alt="Фото к заказу"></div>
+  <div class="viewer-bar"><button type="button" id="viewerClose">Закрыть</button><button type="button" class="del" id="viewerDel">Удалить фото</button></div>
 </div>
 
 <div class="fb-bar" id="fbBar" hidden><button type="button" id="fbMain"></button></div>
@@ -403,11 +434,8 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
 (function () {
   'use strict';
 
-  /* ===== Кто может пользоваться приложением =====
-     Telegram-username без @. Чтобы добавить человека — допишите его в список через запятую, в кавычках. */
-  var ALLOWED_USERNAMES = ['klifards', 'vladkapran', 'ekaterinakhalifi'];
-  /* Для людей без username можно вписать числовой Telegram ID, например: [123456789] */
-  var ALLOWED_IDS = [];
+  /* ===== Адрес сервера (Google Apps Script) ===== */
+  var API_URL = 'https://script.google.com/macros/s/AKfycbx3l09vjqy8PV0OyV0g_XrsW3-9hUG5XUzSXMnZr1JmidnCHrNizWdvpLaTjFy8dKLW7w/exec';
 
   /* ---------- Telegram ---------- */
   var tg = (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
@@ -427,53 +455,39 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
   var CURRENCIES = ['₽', '₸', '₺', '₴', 'BYN', 'сум', '$', '€'];
   var FIELDS = ['name', 'phone', 'car', 'brand', 'model', 'w', 'h', 'd', 'idx', 'qty', 'cost', 'price', 'extra', 'paid', 'due', 'note'];
   var MONTHS = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
+  var FATAL = { FORBIDDEN: 1, UNAUTHORIZED: 1, EXPIRED: 1, CONFIG: 1 };
+  var MAX_PHOTOS = 10;
+  // Ссылка «Открыть заказ» из уведомления бота открывает приложение с ?order=<id>
+  var OPEN_ORDER = (function () { try { return new URLSearchParams(location.search).get('order') || ''; } catch (e) { return ''; } })();
+  var APP_URL = /^https:/.test(location.protocol) ? location.origin + location.pathname : '';
 
   var state = {
-    orders: [], filter: 'all', q: '', cfg: { cur: '₽' },
-    screen: 'list', editing: null, dirty: false, saving: false, sheet: false, listScroll: 0
+    orders: [], filter: 'all', q: '', cfg: { cur: '₽' }, me: null, loaded: false,
+    screen: 'list', editing: null, dirty: false, saving: false, sheet: false, listScroll: 0, refreshing: false,
+    formPhotos: [], formToken: 0, photoCache: {}, viewer: -1, sessionUploads: []
   };
 
-  /* ---------- Хранилище: облако Telegram ---------- */
-  var Store = (function () {
-    var cloud = !!(ver('6.9') && tg.CloudStorage);
-    var PFX = 'tireorders:';
-    var mem = {};
-    var ls = {
-      get: function (k) { try { return localStorage.getItem(PFX + k); } catch (e) { return k in mem ? mem[k] : null; } },
-      set: function (k, v) { try { localStorage.setItem(PFX + k, v); } catch (e) { mem[k] = v; } },
-      del: function (k) { try { localStorage.removeItem(PFX + k); } catch (e) { delete mem[k]; } },
-      keys: function () {
-        try { return Object.keys(localStorage).filter(function (k) { return k.indexOf(PFX) === 0; }).map(function (k) { return k.slice(PFX.length); }); }
-        catch (e) { return Object.keys(mem); }
-      }
-    };
-    function call(method) {
-      var args = Array.prototype.slice.call(arguments, 1);
-      return new Promise(function (resolve, reject) {
-        try {
-          tg.CloudStorage[method].apply(tg.CloudStorage, args.concat([function (err, val) {
-            if (err) reject(new Error(String(err))); else resolve(val);
-          }]));
-        } catch (e) { reject(e); }
+  /* ---------- Связь с сервером ---------- */
+  function err(code, message, data) { var e = new Error(message); e.code = code; e.data = data || {}; return e; }
+
+  function api(action, payload) {
+    if (!API_URL) return Promise.reject(err('CONFIG', 'В приложении не указан адрес сервера.'));
+    var body = Object.assign({ action: action, initData: tg ? (tg.initData || '') : '' }, payload || {});
+    var ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var timer = ctrl ? setTimeout(function () { ctrl.abort(); }, 30000) : null;
+    function done() { if (timer) clearTimeout(timer); }
+    return fetch(API_URL, { method: 'POST', body: JSON.stringify(body), signal: ctrl ? ctrl.signal : undefined })
+      .then(function (r) { return r.text(); }, function () {
+        done(); throw err('NETWORK', 'Нет связи с сервером. Проверьте интернет и попробуйте ещё раз.');
+      })
+      .then(function (text) {
+        done();
+        var res;
+        try { res = JSON.parse(text); } catch (e) { throw err('NETWORK', 'Сервер ответил непонятно. Попробуйте ещё раз.'); }
+        if (!res.ok) throw err(res.error || 'SERVER', res.message || 'Ошибка сервера', res);
+        return res;
       });
-    }
-    return {
-      cloud: cloud,
-      keys: function () { return cloud ? call('getKeys').then(function (k) { return k || []; }) : Promise.resolve(ls.keys()); },
-      getMany: function (keys) {
-        if (!cloud) { var o = {}; keys.forEach(function (k) { o[k] = ls.get(k); }); return Promise.resolve(o); }
-        var out = {}, chain = Promise.resolve();
-        for (var i = 0; i < keys.length; i += 50) {
-          (function (part) {
-            chain = chain.then(function () { return call('getItems', part); }).then(function (r) { Object.assign(out, r || {}); });
-          })(keys.slice(i, i + 50));
-        }
-        return chain.then(function () { return out; });
-      },
-      set: function (k, v) { return cloud ? call('setItem', k, v) : Promise.resolve(ls.set(k, v)); },
-      del: function (k) { return cloud ? call('removeItem', k) : Promise.resolve(ls.del(k)); }
-    };
-  })();
+  }
 
   /* ---------- Утилиты ---------- */
   function $(s, r) { return (r || document).querySelector(s); }
@@ -497,7 +511,6 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
   function markup(o) { return hasCost(o) ? Math.round((num(o.price) - num(o.cost)) / num(o.cost) * 100) : null; }
   var nf = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 });
   function money(n) { return nf.format(Math.round(n * 100) / 100) + ' ' + state.cfg.cur; }
-  function signed(n) { return (n > 0 ? '+' : '') + money(n); }
   function pad(n) { return (n < 10 ? '0' : '') + n; }
   function fmtDate(ts) {
     var d = new Date(ts), now = new Date();
@@ -525,13 +538,12 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
   function tireStr(o) {
     return [[o.brand, o.model].filter(Boolean).join(' '), sizeStr(o), o.idx].filter(Boolean).join(' · ');
   }
-  function newId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
-  function nextNo() { return state.orders.reduce(function (m, o) { return Math.max(m, o.no || 0); }, 0) + 1; }
-  function userName() {
-    var u = inTG && tg.initDataUnsafe && tg.initDataUnsafe.user;
-    return u ? [u.first_name, u.last_name].filter(Boolean).join(' ') : '';
-  }
   function fld(k) { return $('#form [name="' + k + '"]'); }
+  function byId(id) { return state.orders.filter(function (x) { return x.id === id; })[0] || null; }
+  function upsert(o) {
+    var i = state.orders.findIndex(function (x) { return x.id === o.id; });
+    if (i === -1) state.orders.push(o); else state.orders[i] = o;
+  }
 
   function haptic(type) {
     if (!ver('6.1') || !tg.HapticFeedback) return;
@@ -548,17 +560,7 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
     t.textContent = text;
     t.classList.add('show');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { t.classList.remove('show'); }, 2200);
-  }
-
-  /* ---------- Доступ ---------- */
-  function currentUser() { return inTG && tg.initDataUnsafe ? (tg.initDataUnsafe.user || null) : null; }
-  function isAllowed(u) {
-    if (!u) return false;
-    var name = String(u.username || '').toLowerCase();
-    var names = ALLOWED_USERNAMES.map(function (x) { return String(x).trim().replace(/^@/, '').toLowerCase(); });
-    var ids = ALLOWED_IDS.map(function (x) { return String(x).trim(); });
-    return (!!name && names.indexOf(name) !== -1) || ids.indexOf(String(u.id)) !== -1;
+    toastTimer = setTimeout(function () { t.classList.remove('show'); }, 2600);
   }
 
   /* ---------- Диалоги ---------- */
@@ -578,16 +580,16 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
       cancel.onclick = function () { done(false); };
     });
   }
-  function confirmBox(text, okText) {
+  function confirmBox(text, okText, danger) {
     if (ver('6.2')) {
       return new Promise(function (resolve) {
         try {
-          tg.showPopup({ message: text.slice(0, 256), buttons: [{ id: 'ok', type: 'destructive', text: okText || 'OK' }, { type: 'cancel' }] },
+          tg.showPopup({ message: text.slice(0, 256), buttons: [{ id: 'ok', type: danger === false ? 'default' : 'destructive', text: okText || 'OK' }, { type: 'cancel' }] },
             function (id) { resolve(id === 'ok'); });
         } catch (e) { tg.showConfirm(text, function (ok) { resolve(!!ok); }); }
       });
     }
-    return dialog({ text: text, ok: okText, danger: true });
+    return dialog({ text: text, ok: okText, danger: danger !== false });
   }
 
   function copyText(text) {
@@ -624,9 +626,9 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
     else $('#fbMain').disabled = on;
   }
   function onMain() {
-    if (state.sheet || state.screen === 'msg') return;
-    if (state.screen === 'list') openForm(null);
-    else submit();
+    if (state.sheet || state.screen === 'msg' || state.viewer !== -1) return;
+    if (state.screen === 'list') { if (state.loaded) openForm(null); }
+    else submit(false);
   }
   function showBack(on) {
     if (ver('6.1')) { if (on) tg.BackButton.show(); else tg.BackButton.hide(); }
@@ -634,36 +636,60 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
   }
   function onBack() {
     if (!$('#dlg').hidden) return;
+    if (state.viewer !== -1) { closeViewer(); return; }
     if (state.sheet) { closeSheet(); return; }
     if (state.screen !== 'form') return;
     var go = state.dirty ? confirmBox('Выйти без сохранения? Изменения пропадут.', 'Выйти') : Promise.resolve(true);
-    go.then(function (ok) { if (ok) { setDirty(false); showList(); } });
+    go.then(function (ok) { if (ok) { discardUnsaved([]); state.formToken++; setDirty(false); showList(); } });
   }
   function setDirty(on) {
     state.dirty = on;
     if (ver('6.2')) { if (on) tg.enableClosingConfirmation(); else tg.disableClosingConfirmation(); }
   }
 
-  /* ---------- Экран-сообщение (нет доступа / не в Telegram) ---------- */
+  /* ---------- Экран-сообщение ---------- */
   function showMessage(o) {
     state.screen = 'msg';
     $('#listScreen').hidden = true;
     $('#formScreen').hidden = true;
     $('#msgScreen').hidden = false;
+    if (state.sheet) closeSheet();
     hideMain();
     showBack(false);
+    setDirty(false);
     $('#msgTitle').textContent = o.title;
     $('#msgText').textContent = o.text || '';
     var u = o.user;
     $('#msgWho').hidden = !u;
     $('#msgCopy').hidden = !u;
-    $('#msgRetry').hidden = true;
     if (u) {
       $('#msgId').textContent = u.id;
       $('#msgUser').textContent = u.username ? '@' + u.username : 'username не задан';
       $('#msgCopy').onclick = function () {
         copyText(String(u.id)).then(function (ok) { if (ok) toast('ID скопирован'); });
       };
+    }
+    $('#msgRetry').hidden = !o.retry;
+    $('#msgRetry').onclick = function () { $('#msgScreen').hidden = true; state.screen = 'list'; $('#listScreen').hidden = false; load(); };
+  }
+
+  function handleFatal(e) {
+    if (e.code === 'FORBIDDEN') {
+      showMessage({
+        title: 'Нет доступа',
+        text: 'Это приложение только для сотрудников. Если вам нужен доступ, отправьте администратору свой Telegram ID — он добавит вас на лист «Доступ» в таблице заказов.',
+        user: e.data.user || (tg && tg.initDataUnsafe && tg.initDataUnsafe.user), retry: true
+      });
+    } else if (e.code === 'EXPIRED') {
+      showMessage({ title: 'Сессия устарела', text: 'Закройте приложение и откройте его снова через кнопку в боте.' });
+    } else if (e.code === 'UNAUTHORIZED') {
+      showMessage({
+        title: 'Откройте через Telegram',
+        text: inTG ? 'Не удалось подтвердить вход через Telegram. Закройте приложение и откройте его снова через кнопку в боте.'
+                   : 'Это приложение работает внутри Telegram. Откройте его через кнопку в чате с ботом.'
+      });
+    } else {
+      showMessage({ title: 'Сервер не настроен', text: e.message, retry: true });
     }
   }
 
@@ -729,7 +755,7 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
       var pfHtml = '';
       if (hasCost(o) && o.status !== 'cancel') {
         var pr = profit(o);
-        pfHtml = '<span class="pf' + (pr < 0 ? ' neg' : '') + '">прибыль ' + signed(pr) + '</span>';
+        pfHtml = '<span class="pf' + (pr < 0 ? ' neg' : '') + '">прибыль ' + (pr > 0 ? '+' : '') + money(pr) + '</span>';
       }
       var dueHtml = '';
       if (o.due && OPEN[o.status]) {
@@ -737,7 +763,8 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
         dueHtml = '<div class="due' + (late ? ' late' : '') + '">' + (late ? 'просрочен срок: ' : 'срок: ') + fmtDue(o.due) + '</div>';
       }
       return '<div class="card' + (o.status === 'cancel' ? ' cancelled' : '') + '" role="button" tabindex="0" data-id="' + esc(o.id) + '">' +
-        '<div class="card-top"><span>№' + o.no + ' · ' + fmtDate(o.created) + '</span>' +
+        '<div class="card-top"><span>№' + o.no + ' · ' + fmtDate(o.created) + (o.by ? ' · ' + esc(o.by.split(' ')[0]) : '') +
+        (o.photos && o.photos.length ? ' · 📷\u00a0' + o.photos.length : '') + '</span>' +
         '<span class="badge" style="color:' + st.c + ';background:' + st.c + '22">' + st.t + '</span></div>' +
         '<div class="card-name">' + esc(o.name) + '</div>' +
         '<div class="card-tire">' + esc(tire) + (season ? ' · ' + esc(season) : '') + '</div>' +
@@ -787,6 +814,106 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
     setSeg('season', d.season || '');
     setSeg('studs', d.studs || '');
     setSeg('status', d.status || 'new');
+    state.formToken++;
+    state.formPhotos = (d.photos || []).map(function (id) { return { id: id, url: '', uploading: false, error: false }; });
+    renderPhotos();
+    loadPhotos();
+  }
+
+  /* ---------- Фото ---------- */
+  function renderPhotos() {
+    var html = state.formPhotos.map(function (p, i) {
+      var src = p.url || state.photoCache[p.id] || '';
+      var cls = 'ph' + (p.uploading || (!src && !p.error) ? ' loading' : '') + (p.error ? ' broken' : '');
+      return '<button type="button" class="' + cls + '" data-i="' + i + '" aria-label="Фото ' + (i + 1) + '">' +
+        (src ? '<img src="' + src + '" alt="">' : '') + '</button>';
+    }).join('');
+    if (state.formPhotos.length < MAX_PHOTOS) html += '<button type="button" class="ph-add" id="phAdd"><b>+</b>Фото</button>';
+    $('#photos').innerHTML = html;
+  }
+
+  function loadPhotos() {
+    var token = state.formToken;
+    state.formPhotos.forEach(function (p) {
+      if (!p.id || p.url || state.photoCache[p.id]) return;
+      api('photo', { id: p.id }).then(function (res) {
+        state.photoCache[p.id] = 'data:' + res.mime + ';base64,' + res.data;
+        if (state.formToken === token) renderPhotos();
+      }, function (e) {
+        if (FATAL[e.code]) { handleFatal(e); return; }
+        p.error = true;
+        if (state.formToken === token) renderPhotos();
+      });
+    });
+  }
+
+  // Сжимаем на телефоне: до 2000 px по длинной стороне, JPEG — скриншоты остаются читаемыми, а грузятся быстро
+  function compressImage(file) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () {
+        var max = 2000, w = img.naturalWidth, h = img.naturalHeight;
+        var k = Math.min(1, max / Math.max(w, h));
+        var c = document.createElement('canvas');
+        c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
+        var ctx = c.getContext('2d');
+        ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+        ctx.drawImage(img, 0, 0, c.width, c.height);
+        URL.revokeObjectURL(url);
+        resolve(c.toDataURL('image/jpeg', 0.82));
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(err('BAD_IMAGE', 'не удалось прочитать файл')); };
+      img.src = url;
+    });
+  }
+
+  function addPhoto(file) {
+    var token = state.formToken;
+    var item = { id: '', url: '', uploading: true, error: false };
+    state.formPhotos.push(item);
+    setDirty(true);
+    renderPhotos();
+    compressImage(file).then(function (dataUrl) {
+      item.url = dataUrl;
+      if (state.formToken === token) renderPhotos();
+      return api('upload', { mime: 'image/jpeg', data: dataUrl.slice(dataUrl.indexOf(',') + 1) });
+    }).then(function (res) {
+      state.photoCache[res.id] = item.url;
+      if (state.formToken !== token) { api('discard', { ids: [res.id] }).catch(function () {}); return; }  // форму уже закрыли
+      item.id = res.id;
+      item.uploading = false;
+      state.sessionUploads.push(res.id);
+      renderPhotos();
+    }, function (e) {
+      var i = state.formPhotos.indexOf(item);
+      if (i !== -1) state.formPhotos.splice(i, 1);
+      if (state.formToken === token) renderPhotos();
+      if (FATAL[e.code]) handleFatal(e); else toast('Фото не загрузилось: ' + e.message);
+    });
+  }
+
+  function discardUnsaved(keep) {
+    var ids = state.sessionUploads.filter(function (id) { return (keep || []).indexOf(id) === -1; });
+    state.sessionUploads = [];
+    if (ids.length) api('discard', { ids: ids }).catch(function () {});
+  }
+
+  function openViewer(i) {
+    var p = state.formPhotos[i];
+    var src = p && (p.url || state.photoCache[p.id]);
+    if (!src || p.uploading) return;
+    state.viewer = i;
+    $('#viewerImg').src = src;
+    $('#viewer').hidden = false;
+    hideMain();
+    haptic('light');
+  }
+  function closeViewer() {
+    state.viewer = -1;
+    $('#viewer').hidden = true;
+    $('#viewerImg').removeAttribute('src');
+    if (inTG) tg.MainButton.show(); else $('#fbBar').hidden = false;
   }
 
   function readForm() {
@@ -811,13 +938,11 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
     el.className = total(o) > 0 ? (l > 0 ? 'due-sum' : 'zero') : '';
     var pe = $('#tProfit'), mk = $('#tMarkup');
     if (hasCost(o)) {
-      var pr = profit(o);
+      var pr = profit(o), m = markup(o);
       $('#tCost').textContent = money(costTotal(o));
-      pe.textContent = signed(pr);
+      pe.textContent = (pr > 0 ? '+' : '') + money(pr);
       pe.className = pr > 0 ? 'pos' : (pr < 0 ? 'neg' : '');
-      mk.textContent = num(o.price) > 0
-        ? 'наценка на шины ' + markup(o) + ' %' + (num(o.extra) ? ', в т. ч. доп. услуги ' + money(num(o.extra)) : '')
-        : '';
+      mk.textContent = num(o.price) > 0 ? 'наценка на шины ' + m + '\u00a0%' + (num(o.extra) ? ', в т.\u00a0ч. доп. услуги ' + money(num(o.extra)) : '') : '';
     } else {
       $('#tCost').textContent = '—';
       pe.textContent = '—';
@@ -826,23 +951,29 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
     }
   }
 
-  function current() { return state.orders.filter(function (x) { return x.id === state.editing; })[0] || null; }
+  function current() { return state.editing ? byId(state.editing) : null; }
+
+  function formMeta(o) {
+    var meta = 'Создан ' + fmtDT(o.created) + (o.by ? ' · принял(а) ' + o.by : '');
+    if (o.updated && o.updated - o.created > 60000) meta += '\nИзменён ' + fmtDT(o.updated) + (o.updatedBy ? ' · ' + o.updatedBy : '');
+    return meta;
+  }
 
   function openForm(o) {
-    state.listScroll = window.scrollY;
+    discardUnsaved([]);
+    if (state.screen === 'list') state.listScroll = window.scrollY;
     state.editing = o ? o.id : null;
     $$('#form .row.err').forEach(function (r) { r.classList.remove('err'); });
     fillForm(o || { qty: 4, status: 'new' });
     $('#formTitle').textContent = o ? 'Заказ №' + o.no : 'Новый заказ';
     $('#editExtras').hidden = !o;
     if (o) {
-      var meta = 'Создан ' + fmtDT(o.created) + (o.by ? ' · ' + o.by : '');
-      if (o.updated && o.updated - o.created > 60000) meta += '\nИзменён ' + fmtDT(o.updated);
-      $('#formMeta').textContent = meta;
+      $('#formMeta').textContent = formMeta(o);
       $('#formMeta').style.whiteSpace = 'pre-line';
     }
     state.screen = 'form';
     $('#listScreen').hidden = true;
+    $('#msgScreen').hidden = true;
     $('#formScreen').hidden = false;
     window.scrollTo(0, 0);
     setDirty(false);
@@ -868,52 +999,72 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
     return true;
   }
 
-  function submit() {
+  function submit(force) {
     if (state.saving) return;
     var data = readForm();
     if (!validate(data)) return;
-    var now = Date.now(), o, isNew = !state.editing;
-    if (isNew) {
-      o = Object.assign({ id: newId(), no: nextNo(), created: now, by: userName() }, data, { updated: now });
-    } else {
-      o = Object.assign({}, current(), data, { updated: now });
-    }
-    var json = JSON.stringify(o);
-    if (json.length > 4000) { toast('Слишком длинный комментарий'); haptic('error'); return; }
+    if (state.formPhotos.some(function (p) { return p.uploading; })) { toast('Подождите, фото ещё загружаются'); return; }
+    data.photos = state.formPhotos.map(function (p) { return p.id; }).filter(Boolean);
+    var cur = current(), isNew = !cur;
+    if (cur) data.id = cur.id;
     state.saving = true;
     mainProgress(true);
-    Store.set('o_' + o.id, json).then(function () {
-      var i = state.orders.findIndex(function (x) { return x.id === o.id; });
-      if (i === -1) state.orders.push(o); else state.orders[i] = o;
+    api('save', { order: data, base: cur ? cur.updated : 0, force: !!force, appUrl: APP_URL }).then(function (res) {
+      state.saving = false;
+      mainProgress(false);
+      discardUnsaved(res.order.photos || []);
+      state.formToken++;
+      upsert(res.order);
       setDirty(false);
       haptic('success');
       if (isNew) { state.listScroll = 0; state.filter = 'all'; }
       showList();
-      toast(isNew ? 'Заказ №' + o.no + ' создан' : 'Изменения сохранены');
+      toast(isNew ? 'Заказ №' + res.order.no + ' создан' : 'Изменения сохранены');
     }, function (e) {
-      haptic('error');
-      toast('Не удалось сохранить: ' + (e && e.message ? e.message : 'ошибка'));
-    }).then(function () {
       state.saving = false;
       mainProgress(false);
+      haptic('error');
+      if (e.code === 'CONFLICT') {
+        var o = e.data.order || {};
+        confirmBox('Пока вы редактировали, заказ №' + o.no + ' изменил(а) ' + (o.updatedBy || 'другой сотрудник') +
+          '. Сохранить ваш вариант поверх?', 'Сохранить мой', false).then(function (ok) {
+          if (ok) submit(true);
+          else { upsert(o); openForm(o); toast('Показана актуальная версия заказа'); }
+        });
+      } else if (e.code === 'NOT_FOUND') {
+        state.orders = state.orders.filter(function (x) { return x.id !== data.id; });
+        discardUnsaved([]);
+        setDirty(false);
+        showList();
+        toast('Этот заказ уже удалил другой сотрудник');
+      } else if (FATAL[e.code]) {
+        handleFatal(e);
+      } else {
+        toast('Не удалось сохранить: ' + e.message);
+      }
     });
   }
 
   function removeCurrent() {
     var o = current(); if (!o) return;
-    confirmBox('Удалить заказ №' + o.no + ' (' + o.name + ')? Это нельзя отменить.', 'Удалить').then(function (ok) {
+    confirmBox('Удалить заказ №' + o.no + ' (' + o.name + ')? Он пропадёт у всех сотрудников.', 'Удалить').then(function (ok) {
       if (!ok) return;
-      Store.del('o_' + o.id).then(function () {
+      mainProgress(true);
+      api('delete', { id: o.id }).then(function () {
+        mainProgress(false);
+        discardUnsaved([]);
         state.orders = state.orders.filter(function (x) { return x.id !== o.id; });
         setDirty(false);
         haptic('warning');
         showList();
         toast('Заказ №' + o.no + ' удалён');
-      }, function (e) { toast('Не удалось удалить: ' + (e && e.message ? e.message : 'ошибка')); });
+      }, function (e) {
+        mainProgress(false);
+        if (FATAL[e.code]) handleFatal(e); else toast('Не удалось удалить: ' + e.message);
+      });
     });
   }
 
-  // Текст для клиента — без закупки и прибыли
   function clientText(o) {
     var L = ['Заказ №' + o.no];
     var tire = tireStr(o).replace(/ · /g, ' ');
@@ -948,13 +1099,11 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
     $('#curSeg').innerHTML = CURRENCIES.map(function (c) {
       return '<button type="button" data-cur="' + esc(c) + '" class="' + (state.cfg.cur === c ? 'on' : '') + '">' + esc(c) + '</button>';
     }).join('');
-    var n = state.orders.length;
-    var who = ALLOWED_USERNAMES.map(function (x) { return '@' + String(x).replace(/^@/, ''); }).join(', ');
+    var me = state.me;
     $('#storeInfo').textContent =
-      (Store.cloud
-        ? 'Заказы хранятся в облаке Telegram в вашем аккаунте и доступны с любого вашего устройства. Сейчас заказов: ' + n + ' из ~1000 возможных.'
-        : 'Ваша версия Telegram устарела, поэтому заказы сохраняются только на этом устройстве. Обновите Telegram. Сейчас заказов: ' + n + '.') +
-      '\nДоступ к приложению: ' + who + '.';
+      (me ? 'Вы вошли как ' + me.name + (me.username ? ' (@' + me.username + ')' : '') + '.\n' : '') +
+      'Заказы общие: их видят и меняют все сотрудники с доступом. Валюта тоже меняется у всех.\n' +
+      'Добавить или убрать человека — лист «Доступ» в Google Таблице заказов.';
     $('#storeInfo').style.whiteSpace = 'pre-line';
   }
   function openSheet() {
@@ -967,34 +1116,67 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
   function closeSheet() {
     $('#sheet').hidden = true;
     state.sheet = false;
+    if (state.screen === 'msg') return;
     if (inTG) { tg.MainButton.show(); if (state.screen === 'list') showBack(false); }
     else $('#fbBar').hidden = false;
   }
   function applyCurrency() { $$('.cur').forEach(function (el) { el.textContent = state.cfg.cur; }); }
 
-  /* ---------- Загрузка ---------- */
+  /* ---------- Загрузка и обновление ---------- */
+  function applyList(res) {
+    state.orders = res.orders || [];
+    if (res.settings && res.settings.cur) state.cfg.cur = res.settings.cur;
+    state.me = res.me || state.me;
+    state.loaded = true;
+    applyCurrency();
+    if (state.screen === 'list') renderList();
+  }
+
   function load() {
+    if (!inTG) { handleFatal(err('UNAUTHORIZED', '')); return; }
     $('#list').innerHTML = '<div class="empty"><span>Загружаю заказы…</span></div>';
-    return Store.keys().then(function (keys) {
-      var oKeys = keys.filter(function (k) { return k.indexOf('o_') === 0; });
-      return Store.getMany(oKeys.concat(['cfg']));
-    }).then(function (all) {
-      var orders = [];
-      Object.keys(all).forEach(function (k) {
-        var raw = all[k];
-        if (!raw) return;
-        try {
-          var v = JSON.parse(raw);
-          if (k === 'cfg') { if (v && v.cur) state.cfg.cur = v.cur; }
-          else if (v && v.id) orders.push(v);
-        } catch (e) {}
-      });
-      state.orders = orders;
-      applyCurrency();
-      renderList();
-    }).catch(function (e) {
-      $('#list').innerHTML = '<div class="empty"><b>Не удалось загрузить заказы</b><span>' + esc(e && e.message ? e.message : '') +
+    hideMain();
+    setRefreshing(true);
+    api('list').then(function (res) {
+      setRefreshing(false);
+      applyList(res);
+      if (state.screen === 'list') setMain('Новый заказ');
+      if (OPEN_ORDER) {
+        var o = byId(OPEN_ORDER);
+        OPEN_ORDER = '';
+        if (o) openForm(o); else toast('Этот заказ уже удалён');
+      }
+      askNotifications();
+    }, function (e) {
+      setRefreshing(false);
+      if (FATAL[e.code]) { handleFatal(e); return; }
+      $('#list').innerHTML = '<div class="empty"><b>Не удалось загрузить заказы</b><span>' + esc(e.message) +
         '</span><button type="button" class="retry" id="btnRetry">Повторить</button></div>';
+    });
+  }
+
+  // Чтобы бот мог присылать уведомления, пользователь должен разрешить ему писать
+  function askNotifications() {
+    var u = tg && tg.initDataUnsafe && tg.initDataUnsafe.user;
+    if (!u || u.allows_write_to_pm || !ver('6.9') || typeof tg.requestWriteAccess !== 'function') return;
+    var key = 'tireorders:askedWrite';
+    try { if (localStorage.getItem(key)) return; localStorage.setItem(key, '1'); } catch (e) {}
+    try { tg.requestWriteAccess(function (ok) { if (ok) toast('Уведомления от бота включены'); }); } catch (e) {}
+  }
+
+  function setRefreshing(on) { state.refreshing = on; $('#btnRefresh').classList.toggle('spin', on); }
+
+  function refresh(manual) {
+    if (state.refreshing || !state.loaded || state.screen !== 'list' || state.saving) return;
+    setRefreshing(true);
+    api('list').then(function (res) {
+      setRefreshing(false);
+      applyList(res);
+      if (manual) { haptic('light'); toast('Список обновлён'); }
+    }, function (e) {
+      setRefreshing(false);
+      if (FATAL[e.code]) handleFatal(e);
+      else if (manual) toast(e.message);
     });
   }
 
@@ -1012,8 +1194,7 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
     $('#list').addEventListener('click', function (e) {
       if (e.target.closest('#btnRetry')) { load(); return; }
       var c = e.target.closest('.card'); if (!c) return;
-      var id = c.getAttribute('data-id');
-      var o = state.orders.filter(function (x) { return x.id === id; })[0];
+      var o = byId(c.getAttribute('data-id'));
       if (o) openForm(o);
     });
     $('#list').addEventListener('keydown', function (e) {
@@ -1066,22 +1247,51 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
       haptic('select');
     });
 
+    $('#photos').addEventListener('click', function (e) {
+      if (e.target.closest('#phAdd')) { $('#photoInput').click(); return; }
+      var b = e.target.closest('.ph'); if (!b) return;
+      openViewer(Number(b.getAttribute('data-i')));
+    });
+    $('#photoInput').addEventListener('change', function (e) {
+      var files = Array.prototype.slice.call(e.target.files || []);
+      e.target.value = '';
+      var room = MAX_PHOTOS - state.formPhotos.length;
+      if (files.length > room) toast('Можно прикрепить не больше ' + MAX_PHOTOS + ' фото');
+      files.slice(0, Math.max(0, room)).forEach(addPhoto);
+    });
+    $('#viewerClose').addEventListener('click', closeViewer);
+    $('#viewerDel').addEventListener('click', function () {
+      var i = state.viewer;
+      confirmBox('Удалить это фото из заказа?', 'Удалить').then(function (ok) {
+        if (!ok || state.viewer !== i) return;
+        state.formPhotos.splice(i, 1);
+        setDirty(true);
+        closeViewer();
+        renderPhotos();
+      });
+    });
+
     $('#btnDelete').addEventListener('click', removeCurrent);
     $('#btnCopy').addEventListener('click', function () {
       var o = Object.assign({}, current(), readForm());
       copyText(clientText(o)).then(function (ok) { if (ok) { haptic('success'); toast('Скопировано — можно вставить в чат'); } });
     });
 
+    $('#btnRefresh').addEventListener('click', function () { refresh(true); });
     $('#btnSettings').addEventListener('click', openSheet);
     $$('#sheet [data-close]').forEach(function (el) { el.addEventListener('click', closeSheet); });
     $('#curSeg').addEventListener('click', function (e) {
       var b = e.target.closest('button[data-cur]'); if (!b) return;
-      state.cfg.cur = b.getAttribute('data-cur');
-      Store.set('cfg', JSON.stringify(state.cfg)).catch(function () {});
-      applyCurrency();
-      renderSettings();
-      renderList();
+      var prev = state.cfg.cur, next = b.getAttribute('data-cur');
+      if (prev === next) return;
+      state.cfg.cur = next;
+      applyCurrency(); renderSettings(); renderList();
       haptic('select');
+      api('settings', { settings: { cur: next } }).catch(function (e2) {
+        state.cfg.cur = prev;
+        applyCurrency(); renderSettings(); renderList();
+        if (FATAL[e2.code]) handleFatal(e2); else toast('Не удалось сменить валюту: ' + e2.message);
+      });
     });
     $('#btnTsv').addEventListener('click', function () {
       if (!state.orders.length) { toast('Заказов пока нет'); return; }
@@ -1089,42 +1299,34 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
     });
 
     $('#fbBack').addEventListener('click', onBack);
+
+    // Подтягиваем изменения коллег: при возвращении в приложение и раз в минуту
+    document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') refresh(false); });
+    setInterval(function () { if (document.visibilityState === 'visible' && !state.sheet && state.viewer === -1) refresh(false); }, 60000);
   }
 
   /* ---------- Запуск ---------- */
   function init() {
     if (tg) { try { tg.ready(); } catch (e) {} }
-
-    if (!inTG) {
-      showMessage({ title: 'Откройте через Telegram', text: 'Это приложение работает только внутри Telegram. Откройте его кнопкой в чате с ботом.' });
-      return;
+    if (inTG) {
+      document.documentElement.setAttribute('data-scheme', tg.colorScheme || 'light');
+      try { tg.expand(); } catch (e) {}
+      if (ver('6.1')) { try { tg.setHeaderColor('secondary_bg_color'); tg.setBackgroundColor('secondary_bg_color'); } catch (e) {} }
+      if (ver('7.10')) { try { tg.setBottomBarColor('secondary_bg_color'); } catch (e) {} }
+      if (ver('7.7')) { try { tg.disableVerticalSwipes(); } catch (e) {} }
+      tg.MainButton.onClick(onMain);
+      if (ver('6.1')) tg.BackButton.onClick(onBack);
+      tg.onEvent('themeChanged', function () { document.documentElement.setAttribute('data-scheme', tg.colorScheme || 'light'); });
+      if (ver('8.0')) tg.onEvent('activated', function () { refresh(false); });
+    } else {
+      document.body.classList.add('fallback');
+      $('#fbMain').addEventListener('click', onMain);
     }
-
-    document.documentElement.setAttribute('data-scheme', tg.colorScheme || 'light');
-    try { tg.expand(); } catch (e) {}
-    if (ver('6.1')) { try { tg.setHeaderColor('secondary_bg_color'); tg.setBackgroundColor('secondary_bg_color'); } catch (e) {} }
-    if (ver('7.10')) { try { tg.setBottomBarColor('secondary_bg_color'); } catch (e) {} }
-    tg.onEvent('themeChanged', function () { document.documentElement.setAttribute('data-scheme', tg.colorScheme || 'light'); });
-
-    var u = currentUser();
-    if (!isAllowed(u)) {
-      showMessage({
-        title: 'Нет доступа',
-        text: 'Это приложение только для сотрудников. Если вам нужен доступ, отправьте администратору свой Telegram ID или username.',
-        user: u
-      });
-      return;
-    }
-
-    if (ver('7.7')) { try { tg.disableVerticalSwipes(); } catch (e) {} }
-    tg.MainButton.onClick(onMain);
-    if (ver('6.1')) tg.BackButton.onClick(onBack);
     $('#statusSeg').innerHTML = STATUSES.map(function (s) {
       return '<button type="button" data-v="' + s.v + '"><span class="dot" style="background:' + s.c + '"></span>' + s.t + '</button>';
     }).join('');
     applyCurrency();
     bind();
-    setMain('Новый заказ');
     load();
   }
 
