@@ -71,7 +71,8 @@ h1{font-size:22px;font-weight:700;margin:0;letter-spacing:-.01em}
 .msg .retry{margin-top:14px}
 
 /* Сводка */
-.stats{display:grid;grid-template-columns:.75fr 1fr 1fr;gap:8px;margin-bottom:10px}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
+#stExpect{color:var(--warn)}
 .stat{background:var(--section);border-radius:var(--radius);padding:10px 12px;min-width:0}
 .stat-v{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .stat-l{font-size:12.5px;color:var(--hint);margin-top:1px;line-height:1.25}
@@ -239,8 +240,9 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
 
   <div class="stats">
     <div class="stat"><div class="stat-v" id="stActive">0</div><div class="stat-l">в работе</div></div>
-    <div class="stat"><div class="stat-v" id="stDue">0</div><div class="stat-l">ещё получить</div></div>
-    <div class="stat"><div class="stat-v" id="stProfit">0</div><div class="stat-l" id="stProfitL">прибыль за месяц</div></div>
+    <div class="stat"><div class="stat-v" id="stDue">0</div><div class="stat-l">долг клиентов</div></div>
+    <div class="stat"><div class="stat-v" id="stProfit">0</div><div class="stat-l" id="stProfitL">прибыль получена</div></div>
+    <div class="stat"><div class="stat-v" id="stExpect">0</div><div class="stat-l">прибыль ещё получить</div></div>
   </div>
 
   <label class="search">
@@ -709,14 +711,21 @@ body.fallback .toast{bottom:calc(90px + env(safe-area-inset-bottom))}
     var due = state.orders.reduce(function (a, o) { return a + (o.status === 'cancel' ? 0 : left(o)); }, 0);
     $('#stActive').textContent = active;
     $('#stDue').textContent = money(due);
+    // Получено — по выданным (закрытым) заказам; ещё получить — по заказам в работе
     var now = new Date(), y = now.getFullYear(), mth = now.getMonth();
-    var pm = state.orders.reduce(function (a, o) {
-      var d = new Date(o.created || 0);
-      return a + (o.status !== 'cancel' && hasCost(o) && d.getFullYear() === y && d.getMonth() === mth ? profit(o) : 0);
-    }, 0);
-    $('#stProfit').textContent = money(pm);
-    $('#stProfit').className = 'stat-v' + (pm > 0 ? ' pos' : pm < 0 ? ' neg' : '');
-    $('#stProfitL').textContent = 'прибыль за ' + MONTHS[mth];
+    var got = 0, gotMonth = 0, expect = 0;
+    state.orders.forEach(function (o) {
+      if (!hasCost(o)) return;
+      if (o.status === 'done') {
+        got += profit(o);
+        var d = new Date(o.closed || o.updated || o.created || 0);
+        if (d.getFullYear() === y && d.getMonth() === mth) gotMonth += profit(o);
+      } else if (OPEN[o.status]) expect += profit(o);
+    });
+    $('#stProfit').textContent = money(got);
+    $('#stProfit').className = 'stat-v' + (got > 0 ? ' pos' : got < 0 ? ' neg' : '');
+    $('#stProfitL').textContent = 'прибыль получена · за ' + MONTHS[mth] + ' ' + money(gotMonth).replace(/\u00a0/g, ' ');
+    $('#stExpect').textContent = money(expect);
 
     $('#chips').innerHTML = [{ v: 'all', many: 'Все' }].concat(STATUSES).map(function (s) {
       return '<button type="button" class="chip' + (state.filter === s.v ? ' on' : '') + '" data-f="' + s.v + '">' +
